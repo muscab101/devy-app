@@ -26,7 +26,7 @@ export default function HomePage() {
       {/* Hero Section */}
       <section className="flex-1 flex items-center justify-center px-4 py-20">
         <div className="max-w-4xl mx-auto text-center space-y-8">
-          <div className="flex justify-center mb-8">
+          <div className="flex justify-between  mb-8">
             <Image
               src="/images/logo.png"
               alt="Devy - AI Code Generator"
