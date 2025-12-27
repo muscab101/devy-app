@@ -8,7 +8,7 @@ export default function HomePage() {
     <div className="flex min-h-screen flex-col">
       {/* Header */}
       <header className="border-b">
-        <div className="container flex h-16 items-center justify-between px-4">
+        <div className="container flex h-16 items-center justify-between pl-4">
           <Link href="/" className="flex items-center gap-2">
             <Image src="/images/logo.png" alt="Devy Logo" width={120} height={40} className="h-8 w-auto" priority />
           </Link>
@@ -26,7 +26,7 @@ export default function HomePage() {
       {/* Hero Section */}
       <section className="flex-1 flex items-center justify-center px-4 py-20">
         <div className="max-w-4xl mx-auto text-center space-y-8">
-          <div className="flex justify-between  mb-8">
+          <div className="flex justify-center  mb-8">
             <Image
               src="/images/logo.png"
               alt="Devy - AI Code Generator"
