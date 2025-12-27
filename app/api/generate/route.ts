@@ -147,7 +147,8 @@ SAAS / DASHBOARD / TECH:
 
 BACKGROUND / FALLBACK:
 - ALWAYS use if no image fits:
-  https://blocks.astratic.com/img/general-img-landscape.png`
+  https://blocks.astratic.com/img/general-img-landscape.png
+          `
 },
           {
             role: "user",
