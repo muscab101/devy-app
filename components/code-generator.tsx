@@ -87,7 +87,7 @@ export default function CodeGenerator({ user }: CodeGeneratorProps) {
   }
 
   return (
-    <div className="flex min-h-screen flex-col">
+    <div className="flex lg:flex-row flex-col min-h-screen flex-col">
       <Header user={user} />
 
       <div className="flex flex-1 relative">
@@ -143,7 +143,7 @@ export default function CodeGenerator({ user }: CodeGeneratorProps) {
         </div>
 
         {/* Right Panel - Code Preview */}
-        <div className="hidden lg:flex lg:w-3/5 bg-muted/30 flex-col">
+        <div className="lg:flex lg:w-3/5 bg-muted/30 flex-col">
           {generatedCode ? (
             <Tabs value={activeTab} onValueChange={setActiveTab} className="flex flex-col h-full">
               <div className="border-b px-6 py-3">
