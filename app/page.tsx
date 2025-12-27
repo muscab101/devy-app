@@ -8,7 +8,7 @@ export default function HomePage() {
     <div className="flex min-h-screen flex-col">
       {/* Header */}
       <header className="border-b">
-        <div className="container flex h-16 items-center justify-center gap-15 ">
+        <div className="container flex h-16 items-center justify-between px-4">
           <Link href="/" className="flex items-center gap-2">
             <Image src="/images/logo.png" alt="Devy Logo" width={120} height={40} className="h-8 w-auto" priority />
           </Link>
