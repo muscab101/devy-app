@@ -36,7 +36,7 @@ export async function POST(req: Request) {
       body: JSON.stringify({
         model: "deepseek-chat",
         messages: [
-          { role: "system", content: "You are an expert Frontend Developer. Return ONLY raw HTML/Tailwind code. No markdown code blocks." },
+          { role: "system", content: "You are an expert Frontend Developer. Return ONLY raw HTML/Tailwind/javaScript code. No markdown code blocks." },
           { role: "user", content: prompt }
         ],
         stream: true // Tani waa furaha streaming-ka
