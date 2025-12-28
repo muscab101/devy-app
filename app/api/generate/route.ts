@@ -31,7 +31,7 @@ export async function POST(req: Request) {
     const { prompt } = await req.json()
 
     // 2. DeepSeek API Call - Specialized for "God-Tier" UI/UX
-    const response = await fetch("https://api.deepseek.com/v1/chat/completions", {
+    const response = await fetch("https://api.deepseek.com/chat/completions", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
