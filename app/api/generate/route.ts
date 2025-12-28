@@ -1,98 +1,84 @@
 import { createClient } from "@/lib/supabase/server"
 import { NextResponse } from "next/server"
-import { GoogleGenerativeAI } from "@google/generative-ai"
-
-const GENERATION_COST = 200;
-
-export async function POST(request: Request) {
+export async function POST(req: Request) {
   try {
-    console.log("[Gemini] Generate API called")
+
     const supabase = await createClient()
 
     const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
-    const { data: userData, error: userError } = await supabase
+    if (!user) {
+      return NextResponse.json({ error: "Unauthorized access. Please log in." }, { status: 401 })
+    }
+
+    // Cost setting: 3 credits per request
+    const COST_PER_REQUEST = 3;
+
+    // 1. Check user's credit balance
+    const { data: profile, error: profileError } = await supabase
       .from("users")
       .select("credits")
       .eq("id", user.id)
       .single()
 
-    if (userError || !userData) return NextResponse.json({ error: "User error" }, { status: 500 })
-
-    if (userData.credits < GENERATION_COST) {
-      return NextResponse.json({ error: "Insufficient credits" }, { status: 402 })
+    if (profileError || !profile || profile.credits < COST_PER_REQUEST) {
+      return NextResponse.json(
+        { error: `Insufficient credits. You need at least ${COST_PER_REQUEST} credits to generate code.` }, 
+        { status: 403 }
+      )
     }
 
-    const { prompt } = await request.json()
-    if (!prompt) return NextResponse.json({ error: "Prompt is required" }, { status: 400 })
+    const { prompt } = await req.json()
 
-    // Deduct Credits
-    const { data: deductResult, error: deductError } = await supabase.rpc("deduct_credits", {
-      user_id: user.id,
-      amount: GENERATION_COST,
+    // 2. DeepSeek API Call - Specialized for "God-Tier" UI/UX
+    const response = await fetch("https://api.deepseek.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${process.env.DEEPSEEK_API_KEY}`
+      },
+      body: JSON.stringify({
+        model: "deepseek-chat",
+        messages: [
+          { 
+            role: "system", 
+            content: `You are a World-Class Senior Frontend Engineer and UI/UX Designer.
+            - Objective: Create stunning, breathtaking, and high-converting website components.
+            - Tech Stack: Use ONLY pure HTML, Tailwind CSS, and Vanilla JavaScript.
+            - Style: Follow modern design trends (Glassmorphism, Bento grids, smooth animations, and premium gradients).
+            - Icons: Use Lucide Icons via CDN or SVG.
+            - Functionality: Always include interactivity using JavaScript (e.g., scroll reveals, button hover effects, mobile menu logic).
+            - Output: Return ONLY the code block. No explanations, no talk.
+            - Ensure the code is mobile-responsive and looks like a $10,000 professional website.` 
+          },
+          { role: "user", content: `Create a premium, high-end website section for: ${prompt}` }
+        ],
+        temperature: 0.6 // Slightly lower temperature for more structured, reliable code
+      })
     })
 
-    if (deductError || !deductResult) return NextResponse.json({ error: "Credit deduction failed" }, { status: 500 })
+    const aiData = await response.json()
+    const aiMessage = aiData.choices[0].message.content
 
-    try {
-      console.log("[Gemini] Initializing Gemini AI")
-      const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
-      const model = genAI.getGenerativeModel({ 
-        model: "gemini-1.5-flash",
-        systemInstruction: `You are a World-Class Senior Frontend Engineer. Your ONLY mission is to convert wireframes into PIXEL-PERFECT, high-end, and vibrant web designs.
+    // 3. Deduct 3 Credits from user's account
+    const newBalance = profile.credits - COST_PER_REQUEST;
+    const { error: updateError } = await supabase
+      .from("users")
+      .update({ credits: newBalance })
+      .eq("id", user.id)
 
-        VISUAL PRIORITY (MANDATORY):
-        1. COLOR: Use vibrant primary colors (e.g., #10B981 or #2563EB). Do NOT output B&W.
-        2. BACKGROUND: Use soft-tinted backgrounds (bg-slate-50).
-        3. RADIUS: Use extreme corner rounding (rounded-[2.5rem] or rounded-3xl).
-        4. SHADOWS: Apply soft, expansive shadows (shadow-[0_20px_50px_rgba(0,0,0,0.04)]).
-        5. TYPOGRAPHY: Use 'Outfit' font family. Include Google Fonts link in <head>.
-        6. IMAGES: Use real high-quality Unsplash URLs only. No placeholders.
-
-        STRICT CODE COMPLETENESS:
-        - NO ABBREVIATIONS. Every section must be fully coded.
-        - Output ONLY one complete HTML file with Tailwind CDN and JS.
-        - Strictly code only. No preamble, no chatter.`
-      });
-
-      console.log("[Gemini] Generating content...")
-      const result = await model.generateContent(prompt);
-      const response = await result.response;
-      let generatedCode = response.text();
-
-      // Clean the code (remove markdown backticks)
-      generatedCode = generatedCode
-        .replace(/```html\n?/g, "")
-        .replace(/```\n?/g, "")
-        .trim()
-
-      if (!generatedCode.includes("<!DOCTYPE html>")) {
-        generatedCode = `<!DOCTYPE html>\n<html lang="en">\n<head>\n<meta charset="UTF-8">\n<script src="https://cdn.tailwindcss.com"></script>\n</head>\n<body>${generatedCode}</body>\n</html>`
-      }
-
-      // Save to database
-      await supabase.from("projects").insert({
-        user_id: user.id,
-        title: prompt.slice(0, 100),
-        prompt: prompt,
-        generated_code: generatedCode,
-        framework: "html",
-        language: "javascript",
-      })
-
-      return NextResponse.json({
-        code: generatedCode,
-        creditsRemaining: userData.credits - GENERATION_COST,
-      })
-
-    } catch (apiError: any) {
-      console.error("[Gemini] API Error:", apiError)
-      // Refund credits on failure
-      await supabase.from("users").update({ credits: userData.credits }).eq("id", user.id)
-      return NextResponse.json({ error: "AI Generation failed. Credits refunded." }, { status: 500 })
+    if (updateError) {
+      console.error("Credit deduction failed:", updateError)
     }
+
+    return NextResponse.json({ 
+      success: true, 
+      text: aiMessage,
+      remainingCredits: newBalance 
+    })
+
   } catch (error: any) {
-    return NextResponse.json({ error: "Unexpected error occurred" }, { status: 500 })
+    console.error("DeepSeek Error:", error.message)
+    return NextResponse.json({ error: "An error occurred during premium code generation." }, { status: 500 })
   }
 }

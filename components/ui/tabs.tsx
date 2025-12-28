@@ -2,6 +2,14 @@
 
 import * as React from 'react'
 import * as TabsPrimitive from '@radix-ui/react-tabs'
+import Prism from 'prismjs'
+
+// Keen Tomorrow Night Theme
+import 'prismjs/themes/prism-tomorrow.css' 
+// Keen luqadaha aad u baahan tahay
+import 'prismjs/components/prism-javascript'
+import 'prismjs/components/prism-css'
+import 'prismjs/components/prism-markup' // HTML
 
 import { cn } from '@/lib/utils'
 
@@ -9,12 +17,15 @@ function Tabs({
   className,
   ...props
 }: React.ComponentProps<typeof TabsPrimitive.Root>) {
+  // Tani waxay hubinaysaa in code kasta oo gudaha Tabs jira la highlight gareeyo
+  React.useEffect(() => {
+    Prism.highlightAll()
+  }, [props.value]) 
+
   return (
     <TabsPrimitive.Root
       data-slot="tabs"
-      className={cn('flex flex-col gap-2', className)}
-      {...props}
-    />
+      className={cn('flex flex-col gap-2', className)}  {...props} />
   )
 }
 
@@ -63,4 +74,4 @@ function TabsContent({
   )
 }
 
-export { Tabs, TabsList, TabsTrigger, TabsContent }
+export { Tabs, TabsList, TabsTrigger, TabsContent };
