@@ -30,6 +30,7 @@ export default function CodeGenerator({ user }: CodeGeneratorProps) {
 
     setIsGenerating(true)
     setError(null)
+    setGeneratedCode("") // Nadiifi code-kii hore
 
     try {
       const response = await fetch("/api/generate", {
@@ -38,30 +39,55 @@ export default function CodeGenerator({ user }: CodeGeneratorProps) {
         body: JSON.stringify({ prompt }),
       })
 
-      const contentType = response.headers.get("content-type")
-      if (!contentType || !contentType.includes("application/json")) {
-        setError("Server returned an invalid response. Please try again.")
-        return
-      }
-
-      const data = await response.json()
-
-      if (response.status === 402) {
-        setError("Insufficient credits. Please purchase more credits.")
-        return
-      }
-
       if (!response.ok) {
-        setError(data.error || "Failed to generate code")
-        return
+        const errorData = await response.json()
+        throw new Error(errorData.error || "Failed to generate code")
       }
 
-      if (data.code) {
-        setGeneratedCode(data.code)
-        setActiveTab("preview")
+      // STREAM READING STARTS HERE
+      const reader = response.body?.getReader()
+      const decoder = new TextDecoder()
+      
+      if (!reader) throw new Error("Stream reader not available")
+
+      setActiveTab("preview")
+
+      let partialChunk = ""
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+
+        // Decoder-ku wuxuu xogta u beddelayaa qoraal
+        const chunk = decoder.decode(value, { stream: true })
+        partialChunk += chunk
+
+        // SSE Parsing: Kala saar xogta "data: "
+        const lines = partialChunk.split("\n")
+        partialChunk = lines.pop() || "" // Keydi xariiqda dhiman
+
+        for (const line of lines) {
+          const trimmedLine = line.trim()
+          if (!trimmedLine || trimmedLine === "data: [DONE]") continue
+
+          if (trimmedLine.startsWith("data: ")) {
+            try {
+              const jsonStr = trimmedLine.replace("data: ", "")
+              const json = JSON.parse(jsonStr)
+              const content = json.choices[0]?.delta?.content || ""
+              
+              // Ku dar code-ka xaraf-xaraf
+              setGeneratedCode((prev) => prev + content)
+            } catch (e) {
+              // Iska indhatir JSON-ka dhiman ee dhexda ku go'ay
+            }
+          }
+        }
       }
-    } catch (error) {
-      setError("An unexpected error occurred. Please try again.")
+
+    } catch (err: any) {
+      console.error("Frontend Error:", err)
+      setError(err.message || "An unexpected error occurred.")
     } finally {
       setIsGenerating(false)
     }
@@ -77,13 +103,14 @@ export default function CodeGenerator({ user }: CodeGeneratorProps) {
     <div className="flex min-h-screen flex-col">
       <Header user={user} />
 
-      {/* ISBEDDELKA HALKAN AYUU KU JIRAA: 
-          'flex-col' mobile-ka, 'lg:flex-row' shaashadaha waaweyn 
-      */}
       <div className="flex flex-1 flex-col lg:flex-row relative">
-        <HistorySidebar isOpen={showHistory} onClose={() => setShowHistory(false)} onLoadHistory={handleLoadHistory} />
+        <HistorySidebar 
+          isOpen={showHistory} 
+          onClose={() => setShowHistory(false)} 
+          onLoadHistory={handleLoadHistory} 
+        />
 
-        {/* Left Panel - Prompt Input */}
+        {/* Left Panel - Input */}
         <div className="w-full lg:w-2/5 border-b lg:border-r bg-background p-6 flex flex-col">
           <div className="mb-6 flex items-center justify-between">
             <div>
@@ -120,13 +147,13 @@ export default function CodeGenerator({ user }: CodeGeneratorProps) {
               {isGenerating ? (
                 <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Generating...</>
               ) : (
-                <><Sparkles className="mr-2 h-4 w-4" /> Generate (200 credits)</>
+                <><Sparkles className="mr-2 h-4 w-4" /> Generate (3 credits)</>
               )}
             </Button>
           </form>
         </div>
 
-        {/* Right Panel - Code Preview (Hadda waa muuqataa mobile-ka) */}
+        {/* Right Panel - Result */}
         <div className="flex flex-1 lg:w-3/5 bg-muted/30 flex-col min-h-[500px]">
           {generatedCode ? (
             <Tabs value={activeTab} onValueChange={setActiveTab} className="flex flex-col h-full">
@@ -144,7 +171,7 @@ export default function CodeGenerator({ user }: CodeGeneratorProps) {
                 <CodePreview code={generatedCode} />
               </TabsContent>
               <TabsContent value="code" className="flex-1 m-0">
-                <pre className="h-full overflow-auto p-6 text-xs lg:text-sm bg-zinc-950 text-zinc-50">
+                <pre className="h-full overflow-auto p-6 text-xs lg:text-sm bg-zinc-950 text-zinc-50 font-mono">
                   <code>{generatedCode}</code>
                 </pre>
               </TabsContent>
