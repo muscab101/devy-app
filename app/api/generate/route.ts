@@ -1,21 +1,50 @@
 import { createClient } from "@/lib/supabase/server"
 import { NextResponse } from "next/server"
 
-export const maxDuration = 60; // Kordhi waqtiga xadka (Vercel)
+// Vercel Hobby tier is 10s by default, but Streaming helps prevent timeouts
+export const maxDuration = 60; 
+
+const systemPrompt = `You are an expert Frontend Developer, Tailwind CSS, and JavaScript specialist. Your primary role is to convert user requests and wireframes into high-quality, modern, and fully functional web designs.
+
+STRICT OUTPUT RULES:
+1. Return ONLY raw HTML/Tailwind/JS code. 
+2. NO Markdown code blocks (do not use \`\`\`html).
+3. NO abbreviations, NO placeholders, and NO "repeat here" comments. Every element must be fully written out.
+4. Include the Tailwind CDN: <script src="https://cdn.tailwindcss.com"></script>
+
+DESIGN & AESTHETICS:
+- Use CSS Flexbox and CSS Grid for layouts (Mandatory).
+- Modern, visually appealing, and user-friendly aesthetics.
+- Hero sections must fit the screen perfectly.
+- Respect all spacing and heights provided in wireframes.
+
+FUNCTIONALITY & INTERACTIVITY:
+- Implement all interactive elements using vanilla JavaScript (dropdowns, sliders, modals, form validations).
+- All designs must be fully responsive.
+- MOBILE MENU: Use this icon for mobile bars: https://ecommerce-build.s3.amazonaws.com/icons8-menu.svg
+- Hide menus on mobile and show them only when the user clicks the bars. Ensure the icon color matches the theme (white on black or vice versa).
+
+COMPLETENESS:
+- You must provide the FULL, ready-to-use HTML file starting from <!DOCTYPE html> to </html>.
+- Every section (team members, cards, features) must be coded individually even if repetitive.
+
+PLACEHOLDERS:
+- Use https://placehold.co for all images.`;
 
 export async function POST(req: Request) {
   try {
     const supabase = await createClient()
     const { data: { user } } = await supabase.auth.getUser()
 
+    // Check if user is authenticated
     if (!user) {
-      return NextResponse.json({ error: "Fadlan login soo dheh." }, { status: 401 })
+      return NextResponse.json({ error: "Please log in to continue." }, { status: 401 })
     }
 
     const { prompt } = await req.json()
     const COST_PER_REQUEST = 3;
 
-    // Hubi Credits
+    // 1. Verify Credits
     const { data: profile } = await supabase
       .from("users")
       .select("credits")
@@ -23,40 +52,86 @@ export async function POST(req: Request) {
       .single()
 
     if (!profile || (profile.credits || 0) < COST_PER_REQUEST) {
-      return NextResponse.json({ error: "Credits kuma filna." }, { status: 403 })
+      return NextResponse.json({ error: "Insufficient credits." }, { status: 403 })
     }
 
-    // 1. DeepSeek API Call with Streaming
+    // 2. DeepSeek API Call with Streaming
     const response = await fetch("https://api.deepseek.com/chat/completions", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "Authorization": `Bearer ${process.env.DEEPSEEK_API_KEY}`
+        "Authorization": `Bearer ${process.env.DEEPSEEK_API_KEY?.trim()}`
       },
       body: JSON.stringify({
         model: "deepseek-chat",
         messages: [
-          { role: "system", content: "You are an expert Frontend Developer. Return ONLY raw HTML/Tailwind/javaScript code. No markdown code blocks." },
+          { role: "system", content: systemPrompt },
           { role: "user", content: prompt }
         ],
-        stream: true // Tani waa furaha streaming-ka
+        stream: true
       })
     })
 
     if (!response.ok) {
-        const errorData = await response.json();
-        return NextResponse.json({ error: errorData.error?.message || "API error" }, { status: response.status });
+      const errorData = await response.json();
+      return NextResponse.json({ error: errorData.error?.message || "DeepSeek API Error" }, { status: response.status });
     }
 
-    // 2. Ka gooy credits-ka isla marka uu bilaawdo
-    await supabase.from("users").update({ credits: profile.credits - COST_PER_REQUEST }).eq("id", user.id);
+    // 3. Create a Custom ReadableStream to capture data for the database
+    const decoder = new TextDecoder()
+    let fullGeneratedCode = ""
 
-    // 3. Toos ugu soo celi response-ka browser-ka (Streaming)
-    return new Response(response.body, {
+    const customStream = new ReadableStream({
+      async start(controller) {
+        const reader = response.body?.getReader()
+        if (!reader) return
+
+        while (true) {
+          const { done, value } = await reader.read()
+          if (done) break
+
+          const chunk = decoder.decode(value)
+          controller.enqueue(value)
+
+          // SSE Parsing: Reconstruct the code to save it to History later
+          const lines = chunk.split("\n")
+          for (const line of lines) {
+            if (line.startsWith("data: ") && line !== "data: [DONE]") {
+              try {
+                const json = JSON.parse(line.replace("data: ", ""))
+                fullGeneratedCode += json.choices[0]?.delta?.content || ""
+              } catch (e) {
+                // Ignore partial JSON chunks
+              }
+            }
+          }
+        }
+
+        // 4. Save Project & Deduct Credits only when the stream successfully finishes
+        if (fullGeneratedCode) {
+          await supabase.from("projects").insert({
+            user_id: user.id,
+            prompt: prompt,
+            code: fullGeneratedCode,
+            name: prompt.substring(0, 30) + "..."
+          });
+
+          await supabase.from("users").update({ 
+            credits: profile.credits - COST_PER_REQUEST 
+          }).eq("id", user.id);
+        }
+
+        controller.close()
+      }
+    })
+
+    // Return the stream as an Event-Stream
+    return new Response(customStream, {
       headers: { "Content-Type": "text/event-stream" }
     });
 
   } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 })
+    console.error("Generation Error:", error)
+    return NextResponse.json({ error: "An unexpected error occurred." }, { status: 500 })
   }
 }
