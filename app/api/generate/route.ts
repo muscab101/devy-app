@@ -1,27 +1,16 @@
 import { createClient } from "@/lib/supabase/server"
 import { NextResponse } from "next/server"
-import Groq from "groq-sdk"
+import { GoogleGenerativeAI } from "@google/generative-ai"
 
-const GENERATION_COST = 200
-
-
+const GENERATION_COST = 200;
 
 export async function POST(request: Request) {
   try {
-    console.log("[v0] Generate API called")
-
+    console.log("[Gemini] Generate API called")
     const supabase = await createClient()
 
-    const {
-      data: { user },
-    } = await supabase.auth.getUser()
-
-    if (!user) {
-      console.log("[v0] No user found")
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
-    }
-
-    console.log("[v0] User authenticated:", user.id)
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
 
     const { data: userData, error: userError } = await supabase
       .from("users")
@@ -29,122 +18,61 @@ export async function POST(request: Request) {
       .eq("id", user.id)
       .single()
 
-    if (userError || !userData) {
-      console.error("[v0] User fetch error:", userError)
-      return NextResponse.json({ error: "Failed to fetch user data" }, { status: 500 })
-    }
-
-    console.log("[v0] User credits:", userData.credits)
+    if (userError || !userData) return NextResponse.json({ error: "User error" }, { status: 500 })
 
     if (userData.credits < GENERATION_COST) {
       return NextResponse.json({ error: "Insufficient credits" }, { status: 402 })
     }
 
-    let body
-    try {
-      body = await request.json()
-    } catch (parseError) {
-      console.error("[v0] JSON parse error:", parseError)
-      return NextResponse.json({ error: "Invalid request body" }, { status: 400 })
-    }
+    const { prompt } = await request.json()
+    if (!prompt) return NextResponse.json({ error: "Prompt is required" }, { status: 400 })
 
-    const { prompt } = body
-
-    if (!prompt) {
-      return NextResponse.json({ error: "Prompt is required" }, { status: 400 })
-    }
-
-    console.log("[v0] Prompt received:", prompt)
-
+    // Deduct Credits
     const { data: deductResult, error: deductError } = await supabase.rpc("deduct_credits", {
       user_id: user.id,
       amount: GENERATION_COST,
     })
 
-    if (deductError || !deductResult) {
-      console.error("[v0] Credit deduction error:", deductError)
-      return NextResponse.json({ error: "Failed to deduct credits" }, { status: 500 })
-    }
-
-    console.log("[v0] Credits deducted successfully")
+    if (deductError || !deductResult) return NextResponse.json({ error: "Credit deduction failed" }, { status: 500 })
 
     try {
-      console.log("[v0] Initializing Groq client")
-      const groq = new Groq({
-  apiKey: process.env.GROQ_API_KEY, 
-});
+      console.log("[Gemini] Initializing Gemini AI")
+      const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
+      const model = genAI.getGenerativeModel({ 
+        model: "gemini-1.5-flash",
+        systemInstruction: `You are a World-Class Senior Frontend Engineer. Your ONLY mission is to convert wireframes into PIXEL-PERFECT, high-end, and vibrant web designs.
 
-      console.log("[v0] Calling Groq API with prompt:", prompt)
+        VISUAL PRIORITY (MANDATORY):
+        1. COLOR: Use vibrant primary colors (e.g., #10B981 or #2563EB). Do NOT output B&W.
+        2. BACKGROUND: Use soft-tinted backgrounds (bg-slate-50).
+        3. RADIUS: Use extreme corner rounding (rounded-[2.5rem] or rounded-3xl).
+        4. SHADOWS: Apply soft, expansive shadows (shadow-[0_20px_50px_rgba(0,0,0,0.04)]).
+        5. TYPOGRAPHY: Use 'Outfit' font family. Include Google Fonts link in <head>.
+        6. IMAGES: Use real high-quality Unsplash URLs only. No placeholders.
 
-      const completion = await groq.chat.completions.create({
-        messages: [
-         {
-  role: "system",
-  content: `You are a World-Class Senior Frontend Engineer. Your ONLY mission is to convert wireframes into PIXEL-PERFECT, high-end, and vibrant web designs.
+        STRICT CODE COMPLETENESS:
+        - NO ABBREVIATIONS. Every section must be fully coded.
+        - Output ONLY one complete HTML file with Tailwind CDN and JS.
+        - Strictly code only. No preamble, no chatter.`
+      });
 
-    VISUAL PRIORITY (MANDATORY):
-    1. COLOR: Do NOT output black and white layouts. You MUST use a vibrant primary color (e.g., #10B981 for Emerald or #2563EB for Blue) and apply it to buttons, active states, and icons.
-    2. BACKGROUND: Always use a soft-tinted background (bg-slate-50 or bg-gray-50) to make white cards stand out.
-    3. RADIUS: Use extreme corner rounding (rounded-[2.5rem] for main containers and rounded-3xl for cards) as seen in modern SaaS premium designs.
-    4. SHADOWS: Apply soft, expansive shadows (shadow-[0_20px_50px_rgba(0,0,0,0.04)]) to all card elements.
+      console.log("[Gemini] Generating content...")
+      const result = await model.generateContent(prompt);
+      const response = await result.response;
+      let generatedCode = response.text();
 
-    TYPOGRAPHY:
-    - Include 'Outfit' font family in the <head> and apply globally: font-family: 'Outfit', sans-serif;
-
-    IMAGES & CONTENT:
-    - You MUST use high-quality Unsplash images for every hero and card section.
-    - NEVER use placeholders or empty boxes. Every image tag must have a real Unsplash URL.
-
-    STRICT CODE COMPLETENESS:
-    - NO ABBREVIATIONS. Every single card, section, and team member must be fully and individually coded. 
-    - Output ONLY one complete HTML file containing Tailwind CDN and modern JavaScript.
-
-    FINAL RULE:
-    - Strictly output code only. No preamble, no chatter. The result must look like a $10,000 premium dashboard from Dribbble.`
-},
-          {
-            role: "user",
-            content: prompt,
-          },
-        ],
-        model: "llama-3.3-70b-versatile",
-        temperature: 0.7,
-        max_tokens: 8000,
-      })
-
-      console.log("[v0] Groq API response received")
-
-      let generatedCode = completion.choices[0]?.message?.content || ""
-
-      if (!generatedCode) {
-        throw new Error("No code generated by Groq API")
-      }
-
-      console.log("[v0] Generated code length:", generatedCode.length)
-
+      // Clean the code (remove markdown backticks)
       generatedCode = generatedCode
         .replace(/```html\n?/g, "")
         .replace(/```\n?/g, "")
         .trim()
 
       if (!generatedCode.includes("<!DOCTYPE html>")) {
-        generatedCode = `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Generated Component</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-</head>
-<body>
-  ${generatedCode}
-</body>
-</html>`
+        generatedCode = `<!DOCTYPE html>\n<html lang="en">\n<head>\n<meta charset="UTF-8">\n<script src="https://cdn.tailwindcss.com"></script>\n</head>\n<body>${generatedCode}</body>\n</html>`
       }
 
-      console.log("[v0] Saving project to database")
-
-      const { error: saveError } = await supabase.from("projects").insert({
+      // Save to database
+      await supabase.from("projects").insert({
         user_id: user.id,
         title: prompt.slice(0, 100),
         prompt: prompt,
@@ -153,48 +81,18 @@ export async function POST(request: Request) {
         language: "javascript",
       })
 
-      if (saveError) {
-        console.error("[v0] Failed to auto-save:", saveError)
-      } else {
-        console.log("[v0] Project saved successfully")
-      }
-
       return NextResponse.json({
         code: generatedCode,
         creditsRemaining: userData.credits - GENERATION_COST,
       })
-    } catch (groqError: any) {
-      console.error("[v0] Groq API Error:", groqError)
-      console.error("[v0] Error message:", groqError?.message)
-      console.error("[v0] Error stack:", groqError?.stack)
 
-      try {
-        console.log("[v0] Attempting to refund credits")
-        const { error: refundError } = await supabase
-          .from("users")
-          .update({ credits: userData.credits })
-          .eq("id", user.id)
-
-        if (refundError) {
-          console.error("[v0] Failed to refund credits:", refundError)
-        } else {
-          console.log("[v0] Credits refunded successfully")
-        }
-      } catch (refundError) {
-        console.error("[v0] Exception during refund:", refundError)
-      }
-
-      return NextResponse.json(
-        {
-          error: groqError?.message || "Failed to generate code. Your credits have been refunded.",
-        },
-        { status: 500 },
-      )
+    } catch (apiError: any) {
+      console.error("[Gemini] API Error:", apiError)
+      // Refund credits on failure
+      await supabase.from("users").update({ credits: userData.credits }).eq("id", user.id)
+      return NextResponse.json({ error: "AI Generation failed. Credits refunded." }, { status: 500 })
     }
   } catch (error: any) {
-    console.error("[v0] Unexpected error in generate route:", error)
-    console.error("[v0] Error message:", error?.message)
-    console.error("[v0] Error stack:", error?.stack)
-    return NextResponse.json({ error: "An unexpected error occurred" }, { status: 500 })
+    return NextResponse.json({ error: "Unexpected error occurred" }, { status: 500 })
   }
 }
