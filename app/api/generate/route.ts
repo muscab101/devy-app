@@ -23,14 +23,14 @@ export async function POST(req: Request) {
   try {
     const supabase = await createClient()
     const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return NextResponse.json({ error: "Please login." }, { status: 401 })
+    if (!user) return NextResponse.json({ error: "Fadlan soo gal." }, { status: 401 })
 
     const { prompt } = await req.json()
     const COST_PER_REQUEST = 3;
 
     const { data: profile } = await supabase.from("users").select("credits").eq("id", user.id).single()
     if (!profile || (profile.credits || 0) < COST_PER_REQUEST) {
-      return NextResponse.json({ error: "Insufficient credits." }, { status: 403 })
+      return NextResponse.json({ error: "Credits kuugu ma filna." }, { status: 403 })
     }
 
     const response = await fetch("https://api.deepseek.com/chat/completions", {
@@ -43,14 +43,14 @@ export async function POST(req: Request) {
         model: "deepseek-chat",
         messages: [
           { role: "system", content: systemPrompt },
-          { role: "user", content: `Generate a web project for: ${prompt}` }
+          { role: "user", content: prompt }
         ],
         stream: true,
-        response_format: { type: "json_object" }
+        response_format: { type: "json_object" } // Tan ayaa xal u ah dhibka sawirka 2-aad
       })
     })
 
-    if (!response.ok) return NextResponse.json({ error: "DeepSeek API Error" }, { status: 500 })
+    if (!response.ok) return NextResponse.json({ error: "API Error" }, { status: 500 })
 
     const decoder = new TextDecoder()
     let fullText = ""
@@ -76,7 +76,6 @@ export async function POST(req: Request) {
           }
         }
         
-        // Final Save to DB
         if (fullText.length > 500) {
           await supabase.from("projects").insert({ user_id: user.id, prompt, code: fullText, name: prompt.substring(0, 30) });
           await supabase.from("users").update({ credits: profile.credits - COST_PER_REQUEST }).eq("id", user.id);
