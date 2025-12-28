@@ -78,14 +78,14 @@ export async function POST(req: Request) {
     if (!response.ok) {
       console.error("DeepSeek Error:", aiData)
       return NextResponse.json({ 
-        error: aiData.error?.message || "DeepSeek API ayaa cilad bixisay." 
+        error: aiData.error?.message || "error for deepseek." 
       }, { status: response.status })
     }
 
     const aiMessage = aiData.choices?.[0]?.message?.content
 
     if (!aiMessage) {
-      return NextResponse.json({ error: "AI-ga wax jawaab ah ma soo celin." }, { status: 500 })
+      return NextResponse.json({ error: "Yot api is not working" }, { status: 500 })
     }
 
     // 7. Ka gooy credits-ka maadaama shaqadu guulaysatay
