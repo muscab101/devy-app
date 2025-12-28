@@ -1,36 +1,42 @@
 import { createClient } from "@/lib/supabase/server"
 import { NextResponse } from "next/server"
+
+// Tani waxay ka hortagaysaa in Vercel uu function-ka xiro 10 ilbiriqsi ka dib
+export const maxDuration = 60; 
+
 export async function POST(req: Request) {
   try {
-
     const supabase = await createClient()
 
+    // 1. Hubi qofka soo galay (Auth)
     const { data: { user } } = await supabase.auth.getUser()
 
     if (!user) {
-      return NextResponse.json({ error: "Unauthorized access. Please log in." }, { status: 401 })
+      return NextResponse.json({ error: "Fadlan marka hore soo gal (Login)." }, { status: 401 })
     }
 
-    // Cost setting: 3 credits per request
+    const { prompt } = await req.json()
+    if (!prompt) {
+      return NextResponse.json({ error: "Prompt-ka waa lagama maarmaan." }, { status: 400 })
+    }
+
     const COST_PER_REQUEST = 3;
 
-    // 1. Check user's credit balance
+    // 2. Hubi credits-ka user-ka
     const { data: profile, error: profileError } = await supabase
       .from("users")
       .select("credits")
       .eq("id", user.id)
       .single()
 
-    if (profileError || !profile || profile.credits < COST_PER_REQUEST) {
+    if (profileError || !profile || (profile.credits || 0) < COST_PER_REQUEST) {
       return NextResponse.json(
-        { error: `Insufficient credits. You need at least ${COST_PER_REQUEST} credits to generate code.` }, 
+        { error: `Credits-kaagu kuma filna. Waxaad u baahan tahay ugu yaraan ${COST_PER_REQUEST} credits.` }, 
         { status: 403 }
       )
     }
 
-    const { prompt } = await req.json()
-
-    // 2. DeepSeek API Call - Specialized for "God-Tier" UI/UX
+    // 3. DeepSeek API Call
     const response = await fetch("https://api.deepseek.com/chat/completions", {
       method: "POST",
       headers: {
@@ -42,25 +48,33 @@ export async function POST(req: Request) {
         messages: [
           { 
             role: "system", 
-            content: `You are a World-Class Senior Frontend Engineer and UI/UX Designer.
-            - Objective: Create stunning, breathtaking, and high-converting website components.
-            - Tech Stack: Use ONLY pure HTML, Tailwind CSS, and Vanilla JavaScript.
-            - Style: Follow modern design trends (Glassmorphism, Bento grids, smooth animations, and premium gradients).
-            - Icons: Use Lucide Icons via CDN or SVG.
-            - Functionality: Always include interactivity using JavaScript (e.g., scroll reveals, button hover effects, mobile menu logic).
-            - Output: Return ONLY the code block. No explanations, no talk.
-            - Ensure the code is mobile-responsive and looks like a $10,000 professional website.` 
+            content: `You are a World-Class Senior Frontend Engineer. 
+            Return ONLY pure HTML, Tailwind CSS, and Vanilla JavaScript. 
+            No explanations. No Markdown code blocks like \`\`\`html. Just the raw code.` 
           },
-          { role: "user", content: `Create a premium, high-end website section for: ${prompt}` }
+          { role: "user", content: `Create a premium website section for: ${prompt}` }
         ],
-        temperature: 0.6 // Slightly lower temperature for more structured, reliable code
+        temperature: 0.6
       })
     })
 
     const aiData = await response.json()
-    const aiMessage = aiData.choices[0].message.content
 
-    // 3. Deduct 3 Credits from user's account
+    // Hubi haddii DeepSeek ay Error soo celisay (sida 402 Insufficient Balance)
+    if (!response.ok) {
+      console.error("DeepSeek API Error:", aiData)
+      return NextResponse.json({ 
+        error: aiData.error?.message || "DeepSeek API ayaa cilad bixisay. Hubi balance-kaaga." 
+      }, { status: response.status })
+    }
+
+    const aiMessage = aiData.choices?.[0]?.message?.content
+
+    if (!aiMessage) {
+      return NextResponse.json({ error: "AI-ga wax jawaab ah ma soo celin." }, { status: 500 })
+    }
+
+    // 4. Ka gooy credits-ka maadaama ay guul ku dhammaatay
     const newBalance = profile.credits - COST_PER_REQUEST;
     const { error: updateError } = await supabase
       .from("users")
@@ -78,7 +92,9 @@ export async function POST(req: Request) {
     })
 
   } catch (error: any) {
-    console.error("DeepSeek Error:", error.message)
-    return NextResponse.json({ error: "An error occurred during premium code generation." }, { status: 500 })
+    console.error("General Error:", error.message)
+    return NextResponse.json({ 
+      error: "Cilad farsamo ayaa dhacday. Fadlan mar kale isku day." 
+    }, { status: 500 })
   }
 }
