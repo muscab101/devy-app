@@ -4,13 +4,26 @@ import { NextResponse } from "next/server"
 // Kordhi waqtiga ilaa 60 ilbiriqsi si uu u dhameeyo code-ka dheer
 export const maxDuration = 60; 
 
-const systemPrompt = `You are a Senior Web Architect. Your ONLY goal is to output a 100% COMPLETE HTML file.
-- NEVER use markdown like \`\`\`html.
-- START directly with <!DOCTYPE html>.
-- END directly with </html>.
-- NO placeholders or comments like "content goes here".
-- Every section (Menu, Gallery, Footer) MUST be fully coded.
-- Use Tailwind CDN and Vanilla JS for interactivity.`;
+const systemPrompt = `You are a Senior Web Architect. Generate a COMPREHENSIVE multi-file web project.
+STRICT RULE: Your response must be ONLY a valid JSON object.
+
+JSON Structure:
+{
+  "files": [
+    { "name": "index.html", "code": "<!DOCTYPE html>... (Landing Page with Nav to all pages) ..." },
+    { "name": "services.html", "code": "<!DOCTYPE html>... (Detailed Services Page) ..." },
+    { "name": "login.html", "code": "<!DOCTYPE html>... (Login Form with Tailwind) ..." },
+    { "name": "signup.html", "code": "<!DOCTYPE html>... (Signup Form with Tailwind) ..." },
+    { "name": "style.css", "code": "/* Custom CSS if needed */" },
+    { "name": "script.js", "code": "// JS for interactivity" }
+  ]
+}
+
+SPECIFIC REQUIREMENTS:
+- All HTML files MUST include the Tailwind CSS CDN.
+- Each page must have a consistent Navigation Bar that links to all other pages (e.g., <a href="services.html">Services</a>).
+- The Login and Signup pages should be modern and responsive.
+- Do NOT use placeholders. Write full, working code for every single file.`;
 
 export async function POST(req: Request) {
   try {
