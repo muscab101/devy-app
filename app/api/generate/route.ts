@@ -1,14 +1,14 @@
 import { createClient } from "@/lib/supabase/server"
 import { NextResponse } from "next/server"
 
-// Kordhi waqtiga ilaa 60 ilbiriqsi si uu u dhameeyo code-ka dheer
+// 60 seconds waa waqtiga ugu badan ee Vercel Free tier u ogol yahay Function-ka
 export const maxDuration = 60; 
 
-const systemPrompt = `You are a Senior Web Architect. Your ONLY goal is to output a 100% COMPLETE HTML file.
+const systemPrompt = `You are a Senior Web Architect. Your ONLY goal is to output a 100% COMPLETE HTML file based on the provided sketch.
 - NEVER use markdown like \`\`\`html.
 - START directly with <!DOCTYPE html>.
 - END directly with </html>.
-- NO placeholders or comments like "content goes here".
+- NO placeholders or comments.
 - Every section (Menu, Gallery, Footer) MUST be fully coded.
 - Use Tailwind CDN and Vanilla JS for interactivity.`;
 
@@ -21,7 +21,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Please login." }, { status: 401 })
     }
 
-    const { prompt } = await req.json()
+    const { prompt, image } = await req.json()
     const COST_PER_REQUEST = 3;
 
     // 1. Credit Check
@@ -35,78 +35,65 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Insufficient credits." }, { status: 403 })
     }
 
-    // 2. DeepSeek Call with Optimized Settings
-    const response = await fetch("https://api.deepseek.com/chat/completions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${process.env.DEEPSEEK_API_KEY?.trim()}`
-      },
-      body: JSON.stringify({
-        model: "deepseek-chat",
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: prompt }
-        ],
-        stream: true,
-        max_tokens: 8192, // Tan ayaa xal u ah inuu code-ka dhameeyo
-        temperature: 0.1, // AI-ga ka dhigaysa mid toos u shaqeeya
-        stop: ["```"] 
-      })
-    })
+    // 2. Gemini API Call (Non-Streaming Version)
+    const GEMINI_API_KEY = process.env.GEMINI_API_KEY?.trim();
+    
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [
+            {
+              role: "user",
+              parts: [
+                { text: `${systemPrompt}\n\nUser Instruction: ${prompt || "Build this design exactly as sketched."}` },
+                {
+                  inline_data: {
+                    mime_type: "image/png",
+                    data: image.split(",")[1], 
+                  },
+                },
+              ],
+            },
+          ],
+          generationConfig: {
+            temperature: 0.1,
+            maxOutputTokens: 8192, // Waxaan u ogolaanay code aad u dheer
+          },
+        }),
+      }
+    );
 
     if (!response.ok) {
-      return NextResponse.json({ error: "API connection failed" }, { status: response.status });
+      return NextResponse.json({ error: "AI failed to respond" }, { status: 500 });
     }
 
-    const decoder = new TextDecoder()
-    let fullGeneratedCode = ""
+    const result = await response.json();
+    const fullGeneratedCode = result.candidates?.[0]?.content?.parts?.[0]?.text || "";
 
-    const customStream = new ReadableStream({
-      async start(controller) {
-        const reader = response.body?.getReader()
-        if (!reader) return
+    if (!fullGeneratedCode || fullGeneratedCode.length < 100) {
+      return NextResponse.json({ error: "AI generated empty or too short code" }, { status: 500 });
+    }
 
-        while (true) {
-          const { done, value } = await reader.read()
-          if (done) break
-
-          const chunk = decoder.decode(value)
-          controller.enqueue(value)
-
-          const lines = chunk.split("\n")
-          for (const line of lines) {
-            if (line.startsWith("data: ") && line !== "data: [DONE]") {
-              try {
-                const json = JSON.parse(line.replace("data: ", ""))
-                fullGeneratedCode += json.choices[0]?.delta?.content || ""
-              } catch (e) {}
-            }
-          }
-        }
-
-        // Keydi kaliya haddii code-ku dhowaad dhamaaday (Checking for </html>)
-        if (fullGeneratedCode.length > 200) {
-          await supabase.from("projects").insert({
-            user_id: user.id,
-            prompt: prompt,
-            code: fullGeneratedCode,
-            name: prompt.substring(0, 30)
-          });
-
-          await supabase.from("users").update({ 
-            credits: profile.credits - COST_PER_REQUEST 
-          }).eq("id", user.id);
-        }
-        controller.close()
-      }
-    })
-
-    return new Response(customStream, {
-      headers: { "Content-Type": "text/event-stream" }
+    // 3. Keydi Project-ka iyo Credit-ka ka jar
+    await supabase.from("projects").insert({
+      user_id: user.id,
+      prompt: prompt || "Visual Sketch",
+      code: fullGeneratedCode,
+      name: (prompt || "Sketch Project").substring(0, 30)
     });
 
+    await supabase.from("users").update({ 
+      credits: profile.credits - COST_PER_REQUEST 
+    }).eq("id", user.id);
+
+    // 4. Hal mar soo celi code-ka
+    return NextResponse.json({ code: fullGeneratedCode });
+
   } catch (error: any) {
+    console.error("Route Error:", error)
     return NextResponse.json({ error: error.message }, { status: 500 })
   }
 }

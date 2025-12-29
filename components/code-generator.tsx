@@ -1,192 +1,163 @@
 "use client"
 
-import type React from "react"
 import { useState } from "react"
+// ERROR FIX: Ka saar exportToBlob iyo exportToCanvas halkan
+import { Tldraw, type Editor } from "tldraw" 
+import "tldraw/tldraw.css"
 import type { User } from "@supabase/supabase-js"
 import { Button } from "@/components/ui/button"
-import { Textarea } from "@/components/ui/textarea"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Loader2, Sparkles, Code2, Eye, AlertCircle, History } from "lucide-react"
+import { Loader2, Sparkles, Code2, Eye, History, MousePointer2 } from "lucide-react"
 import CodePreview from "@/components/code-preview"
 import Header from "@/components/header"
 import HistorySidebar from "@/components/history-sidebar"
-import { Alert, AlertDescription } from "@/components/ui/alert"
 
-interface CodeGeneratorProps {
-  user: User
-}
-
-export default function CodeGenerator({ user }: CodeGeneratorProps) {
-  const [prompt, setPrompt] = useState("")
+export default function CodeGenerator({ user }: { user: User }) {
   const [generatedCode, setGeneratedCode] = useState("")
   const [isGenerating, setIsGenerating] = useState(false)
   const [activeTab, setActiveTab] = useState("preview")
-  const [error, setError] = useState<string | null>(null)
   const [showHistory, setShowHistory] = useState(false)
+  const [editor, setEditor] = useState<Editor | null>(null)
 
-  const handleGenerate = async (e?: React.FormEvent) => {
-    if (e) e.preventDefault()
-    if (!prompt.trim()) return
+  const handleGenerate = async () => {
+    if (!editor) return
 
     setIsGenerating(true)
-    setError(null)
-    setGeneratedCode("") // Nadiifi code-kii hore
+    setGeneratedCode("")
 
     try {
+      // 1. Hel dhammaan wixii lagu sawiray Canvas-ka
+      const shapeIds = Array.from(editor.getCurrentPageShapeIds())
+      if (shapeIds.length === 0) {
+        alert("Fadlan wax sawir marka hore!")
+        setIsGenerating(false)
+        return
+      }
+
+      // 2. ERROR FIX (image_870388.png): getSvg hadda waa asycn, waxaana laga helaa tldraw utils
+      // Waxaan isticmaalaynaa habka ugu fudud ee v2 si sawir looga qaado
+      const { getSvg } = await import('tldraw')
+      const svg = await getSvg(editor, shapeIds)
+      
+      if (!svg) throw new Error("Could not generate SVG")
+      
+      const svgString = new XMLSerializer().serializeToString(svg)
+      const base64Image = `data:image/svg+xml;base64,${btoa(svgString)}`
+
+      // 3. U dir API-ga (Hubi in API-gaagu leeyahay Vision awood)
       const response = await fetch("/api/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt }),
+        body: JSON.stringify({ 
+          image: base64Image,
+          prompt: "Build a high-quality website from this sketch using Tailwind CSS." 
+        }),
       })
 
-      if (!response.ok) {
-        const errorData = await response.json()
-        throw new Error(errorData.error || "Failed to generate code")
-      }
+      if (!response.ok) throw new Error("API Error")
 
-      // STREAM READING STARTS HERE
       const reader = response.body?.getReader()
       const decoder = new TextDecoder()
-      
-      if (!reader) throw new Error("Stream reader not available")
-
       setActiveTab("preview")
 
-      let partialChunk = ""
-
-      while (true) {
+      while (reader) {
         const { done, value } = await reader.read()
         if (done) break
-
-        // Decoder-ku wuxuu xogta u beddelayaa qoraal
-        const chunk = decoder.decode(value, { stream: true })
-        partialChunk += chunk
-
-        // SSE Parsing: Kala saar xogta "data: "
-        const lines = partialChunk.split("\n")
-        partialChunk = lines.pop() || "" // Keydi xariiqda dhiman
-
+        const chunk = decoder.decode(value)
+        const lines = chunk.split("\n")
         for (const line of lines) {
-          const trimmedLine = line.trim()
-          if (!trimmedLine || trimmedLine === "data: [DONE]") continue
-
-          if (trimmedLine.startsWith("data: ")) {
+          if (line.startsWith("data: ") && line !== "data: [DONE]") {
             try {
-              const jsonStr = trimmedLine.replace("data: ", "")
-              const json = JSON.parse(jsonStr)
-              const content = json.choices[0]?.delta?.content || ""
-              
-              // Ku dar code-ka xaraf-xaraf
-              setGeneratedCode((prev) => prev + content)
-            } catch (e) {
-              // Iska indhatir JSON-ka dhiman ee dhexda ku go'ay
-            }
+              const json = JSON.parse(line.replace("data: ", ""))
+              setGeneratedCode(prev => prev + (json.choices[0]?.delta?.content || ""))
+            } catch (e) {}
           }
         }
       }
-
-    } catch (err: any) {
-      console.error("Frontend Error:", err)
-      setError(err.message || "An unexpected error occurred.")
+    } catch (err) {
+      console.error("Error:", err)
     } finally {
       setIsGenerating(false)
     }
   }
 
-  const handleLoadHistory = (code: string, historyPrompt: string) => {
-    setGeneratedCode(code)
-    setPrompt(historyPrompt)
-    setShowHistory(false)
-  }
-
   return (
-    <div className="flex min-h-screen flex-col">
+    <div className="flex min-h-screen flex-col bg-zinc-950 text-white">
       <Header user={user} />
 
-      <div className="flex flex-1 flex-col lg:flex-row relative">
-        <HistorySidebar 
-          isOpen={showHistory} 
-          onClose={() => setShowHistory(false)} 
-          onLoadHistory={handleLoadHistory} 
-        />
+      <div className="flex flex-1 flex-col lg:flex-row overflow-hidden relative">
+        <HistorySidebar isOpen={showHistory} onClose={() => setShowHistory(false)} 
+          onLoadHistory={(code) => { setGeneratedCode(code); setShowHistory(false) }} />
 
-        {/* Left Panel - Input */}
-        <div className="w-full lg:w-2/5 border-b lg:border-r bg-background p-6 flex flex-col">
-          <div className="mb-6 flex items-center justify-between">
-            <div>
-              <h2 className="text-xl lg:text-2xl font-bold mb-1">Generate Code</h2>
-              <p className="text-muted-foreground text-xs lg:text-sm">
-                Describe what you want to build with HTML, Tailwind CSS & JS
-              </p>
-            </div>
-            <Button variant="outline" size="sm" onClick={() => setShowHistory(!showHistory)}>
-              <History className="h-4 w-4 mr-2" />
-              History
+        {/* Bidix: tldraw Editor - Style-ka sawirkaaga (image_fe425d.png) */}
+        <div className="w-full lg:w-1/2 border-r border-zinc-800 flex flex-col relative bg-zinc-900">
+          <div className="h-12 border-b border-zinc-800 flex items-center justify-between px-4 bg-black/20">
+            <span className="text-xs font-mono uppercase tracking-widest text-zinc-500 flex items-center gap-2">
+              <MousePointer2 className="w-3 h-3" /> Visual Architect
+            </span>
+            <Button variant="ghost" size="sm" onClick={() => setShowHistory(true)}>
+              <History className="h-4 w-4 text-zinc-400" />
             </Button>
           </div>
+          
+          <div className="flex-1 overflow-hidden tldraw-dark-theme">
+            <Tldraw 
+              onMount={(editor) => setEditor(editor)} 
+              inferDarkMode={true}
+            />
+          </div>
 
-          <form onSubmit={handleGenerate} className="flex flex-col gap-4">
-            {error && (
-              <Alert variant="destructive">
-                <AlertCircle className="h-4 w-4" />
-                <AlertDescription>{error}</AlertDescription>
-              </Alert>
-            )}
-
-            <div className="flex flex-col">
-              <label className="text-sm font-medium mb-2">Prompt</label>
-              <Textarea
-                placeholder="e.g., Create a modern hero section..."
-                value={prompt}
-                onChange={(e) => setPrompt(e.target.value)}
-                className="min-h-[150px] lg:min-h-[300px] resize-none"
-              />
-            </div>
-
-            <Button type="submit" disabled={!prompt.trim() || isGenerating} className="w-full">
+          <div className="p-4 bg-zinc-950 border-t border-zinc-800">
+            <Button 
+              onClick={handleGenerate} 
+              disabled={isGenerating} 
+              className="w-full bg-white text-black hover:bg-zinc-200 h-12 font-bold transition-all"
+            >
               {isGenerating ? (
-                <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Generating...</>
+                <><Loader2 className="animate-spin mr-2" /> Architecting...</>
               ) : (
-                <><Sparkles className="mr-2 h-4 w-4" /> Generate (3 credits)</>
+                <><Sparkles className="mr-2 h-4 w-4" /> Generate Project</>
               )}
             </Button>
-          </form>
+          </div>
         </div>
 
-        {/* Right Panel - Result */}
-        <div className="flex flex-1 lg:w-3/5 bg-muted/30 flex-col min-h-[500px]">
+        {/* Midig: Preview Area */}
+        <div className="flex-1 flex flex-col bg-[#121212]">
           {generatedCode ? (
-            <Tabs value={activeTab} onValueChange={setActiveTab} className="flex flex-col h-full">
-              <div className="border-b px-6 py-3 bg-background/50 backdrop-blur">
-                <TabsList>
-                  <TabsTrigger value="preview" className="gap-2">
-                    <Eye className="h-4 w-4" /> Preview
-                  </TabsTrigger>
-                  <TabsTrigger value="code" className="gap-2">
-                    <Code2 className="h-4 w-4" /> Code
-                  </TabsTrigger>
+            <Tabs value={activeTab} onValueChange={setActiveTab} className="h-full flex flex-col">
+              <div className="h-12 border-b border-white/5 bg-zinc-900 px-4 flex items-center">
+                <TabsList className="bg-zinc-800 border-zinc-700 h-8">
+                  <TabsTrigger value="preview" className="text-xs">Preview</TabsTrigger>
+                  <TabsTrigger value="code" className="text-xs">Code</TabsTrigger>
                 </TabsList>
               </div>
-              <TabsContent value="preview" className="flex-1 m-0 p-4 lg:p-6 overflow-auto">
-                <CodePreview code={generatedCode} />
-              </TabsContent>
-              <TabsContent value="code" className="flex-1 m-0">
-                <pre className="h-full overflow-auto p-6 text-xs lg:text-sm bg-zinc-950 text-zinc-50 font-mono">
-                  <code>{generatedCode}</code>
-                </pre>
-              </TabsContent>
+              <div className="flex-1 overflow-hidden">
+                <TabsContent value="preview" className="h-full m-0 bg-white">
+                  <CodePreview code={generatedCode} />
+                </TabsContent>
+                <TabsContent value="code" className="h-full m-0 overflow-auto p-6 font-mono text-[13px] text-zinc-400">
+                  <pre><code>{generatedCode}</code></pre>
+                </TabsContent>
+              </div>
             </Tabs>
           ) : (
-            <div className="flex items-center justify-center h-full p-12">
-              <div className="text-center text-muted-foreground">
-                <Sparkles className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                <p className="text-lg font-medium">No code generated yet</p>
-                <p className="text-sm">Your creation will appear here</p>
+            <div className="flex flex-col items-center justify-center h-full text-zinc-800">
+              <div className="relative">
+                <Sparkles className="h-24 w-24 mb-4 opacity-5" />
+                <div className="absolute inset-0 animate-pulse bg-white/5 blur-3xl rounded-full" />
               </div>
+              <p className="font-mono text-[10px] uppercase tracking-[0.5em] opacity-20">Ready to Architect</p>
             </div>
           )}
         </div>
       </div>
+
+      <style jsx global>{`
+        .tldraw-dark-theme .tl-container { background-color: #09090b !important; }
+        .tl-ui { --tl-background: #18181b !important; }
+        .tl-theme__dark { background: #09090b !important; }
+      `}</style>
     </div>
   )
 }
