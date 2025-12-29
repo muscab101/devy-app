@@ -1,12 +1,10 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 
-:root {
-  color-scheme: light !important;
+.tldraw {
+  --tl-background: white;
 }
-.tl-container {
-  --tl-background: #ffffff !important;
-}
+
 
 @custom-variant dark (&:is(.dark *));
 
