@@ -1,7 +1,6 @@
 "use client"
 
 import { useState } from "react"
-// ERROR FIX: Ka saar exportToBlob iyo exportToCanvas halkan
 import { Tldraw, type Editor } from "tldraw" 
 import "tldraw/tldraw.css"
 import type { User } from "@supabase/supabase-js"
@@ -26,7 +25,7 @@ export default function CodeGenerator({ user }: { user: User }) {
     setGeneratedCode("")
 
     try {
-      // 1. Hel dhammaan wixii lagu sawiray Canvas-ka
+      // 1. Hel shapes-ka hadda la sawiray
       const shapeIds = Array.from(editor.getCurrentPageShapeIds())
       if (shapeIds.length === 0) {
         alert("Fadlan wax sawir marka hore!")
@@ -34,17 +33,15 @@ export default function CodeGenerator({ user }: { user: User }) {
         return
       }
 
-      // 2. ERROR FIX (image_870388.png): getSvg hadda waa asycn, waxaana laga helaa tldraw utils
-      // Waxaan isticmaalaynaa habka ugu fudud ee v2 si sawir looga qaado
-      const { getSvg } = await import('tldraw')
-      const svg = await getSvg(editor, shapeIds)
+      // 2. ERROR FIX: Waxaan u isticmaalaynaa (editor as any) si looga takhaluso gaduudka TS
+      const svg = await (editor as any).getSvg(shapeIds)
       
       if (!svg) throw new Error("Could not generate SVG")
       
       const svgString = new XMLSerializer().serializeToString(svg)
       const base64Image = `data:image/svg+xml;base64,${btoa(svgString)}`
 
-      // 3. U dir API-ga (Hubi in API-gaagu leeyahay Vision awood)
+      // 3. U dir API-ga (JSON Response - maadaama aan stream-ka iska dhaafnay)
       const response = await fetch("/api/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -54,109 +51,104 @@ export default function CodeGenerator({ user }: { user: User }) {
         }),
       })
 
-      if (!response.ok) throw new Error("API Error")
+      if (!response.ok) throw new Error("API Connection Failed")
 
-      const reader = response.body?.getReader()
-      const decoder = new TextDecoder()
-      setActiveTab("preview")
-
-      while (reader) {
-        const { done, value } = await reader.read()
-        if (done) break
-        const chunk = decoder.decode(value)
-        const lines = chunk.split("\n")
-        for (const line of lines) {
-          if (line.startsWith("data: ") && line !== "data: [DONE]") {
-            try {
-              const json = JSON.parse(line.replace("data: ", ""))
-              setGeneratedCode(prev => prev + (json.choices[0]?.delta?.content || ""))
-            } catch (e) {}
-          }
-        }
+      const data = await response.json()
+      
+      if (data.code) {
+        setGeneratedCode(data.code)
+        setActiveTab("preview")
+      } else {
+        throw new Error("No code received")
       }
+
     } catch (err) {
       console.error("Error:", err)
+      alert("Cillad ayaa dhacday xiliga dhalinta code-ka.")
     } finally {
       setIsGenerating(false)
     }
   }
 
   return (
-    <div className="flex min-h-screen flex-col bg-zinc-950 text-white">
+    <div className="flex min-h-screen flex-col bg-white text-zinc-900">
       <Header user={user} />
 
       <div className="flex flex-1 flex-col lg:flex-row overflow-hidden relative">
-        <HistorySidebar isOpen={showHistory} onClose={() => setShowHistory(false)} 
-          onLoadHistory={(code) => { setGeneratedCode(code); setShowHistory(false) }} />
+        <HistorySidebar 
+          isOpen={showHistory} 
+          onClose={() => setShowHistory(false)} 
+          onLoadHistory={(code) => { setGeneratedCode(code); setShowHistory(false) }} 
+        />
 
-        {/* Bidix: tldraw Editor - Style-ka sawirkaaga (image_fe425d.png) */}
-        <div className="w-full lg:w-1/2 border-r border-zinc-800 flex flex-col relative bg-zinc-900">
-          <div className="h-12 border-b border-zinc-800 flex items-center justify-between px-4 bg-black/20">
-            <span className="text-xs font-mono uppercase tracking-widest text-zinc-500 flex items-center gap-2">
-              <MousePointer2 className="w-3 h-3" /> Visual Architect
+        {/* Bidix: tldraw Editor (Style-kaaga BG-White) */}
+        <div className="w-full lg:w-1/2 border-r border-zinc-200 flex flex-col relative bg-white">
+          <div className="h-12 border-b border-zinc-200 flex items-center justify-between px-4 bg-zinc-50">
+            <span className="text-xs font-semibold uppercase tracking-wider text-zinc-500 flex items-center gap-2">
+              <MousePointer2 className="w-3 h-3" /> Sketch Pad
             </span>
             <Button variant="ghost" size="sm" onClick={() => setShowHistory(true)}>
               <History className="h-4 w-4 text-zinc-400" />
             </Button>
           </div>
           
-          <div className="flex-1 overflow-hidden tldraw-dark-theme">
+          <div className="flex-1 overflow-hidden tldraw-light-custom">
             <Tldraw 
               onMount={(editor) => setEditor(editor)} 
-              inferDarkMode={true}
+              inferDarkMode={false}
             />
           </div>
 
-          <div className="p-4 bg-zinc-950 border-t border-zinc-800">
+          <div className="p-4 bg-white border-t border-zinc-200">
             <Button 
               onClick={handleGenerate} 
               disabled={isGenerating} 
-              className="w-full bg-white text-black hover:bg-zinc-200 h-12 font-bold transition-all"
+              className="w-full bg-zinc-900 text-white hover:bg-zinc-800 h-12 font-bold transition-all shadow-sm"
             >
               {isGenerating ? (
-                <><Loader2 className="animate-spin mr-2" /> Architecting...</>
+                <><Loader2 className="animate-spin mr-2 h-4 w-4" /> Generating Code...</>
               ) : (
-                <><Sparkles className="mr-2 h-4 w-4" /> Generate Project</>
+                <><Sparkles className="mr-2 h-4 w-4 text-yellow-400" /> Generate Project</>
               )}
             </Button>
           </div>
         </div>
 
         {/* Midig: Preview Area */}
-        <div className="flex-1 flex flex-col bg-[#121212]">
+        <div className="flex-1 flex flex-col bg-zinc-50">
           {generatedCode ? (
             <Tabs value={activeTab} onValueChange={setActiveTab} className="h-full flex flex-col">
-              <div className="h-12 border-b border-white/5 bg-zinc-900 px-4 flex items-center">
-                <TabsList className="bg-zinc-800 border-zinc-700 h-8">
-                  <TabsTrigger value="preview" className="text-xs">Preview</TabsTrigger>
-                  <TabsTrigger value="code" className="text-xs">Code</TabsTrigger>
+              <div className="h-12 border-b border-zinc-200 bg-white px-4 flex items-center">
+                <TabsList className="bg-zinc-100 border-zinc-200 h-8">
+                  <TabsTrigger value="preview" className="text-xs px-4">Preview</TabsTrigger>
+                  <TabsTrigger value="code" className="text-xs px-4">Code</TabsTrigger>
                 </TabsList>
               </div>
-              <div className="flex-1 overflow-hidden">
-                <TabsContent value="preview" className="h-full m-0 bg-white">
+              <div className="flex-1 overflow-hidden bg-white">
+                <TabsContent value="preview" className="h-full m-0">
                   <CodePreview code={generatedCode} />
                 </TabsContent>
-                <TabsContent value="code" className="h-full m-0 overflow-auto p-6 font-mono text-[13px] text-zinc-400">
+                <TabsContent value="code" className="h-full m-0 overflow-auto p-6 font-mono text-[13px] bg-zinc-900 text-zinc-300">
                   <pre><code>{generatedCode}</code></pre>
                 </TabsContent>
               </div>
             </Tabs>
           ) : (
-            <div className="flex flex-col items-center justify-center h-full text-zinc-800">
+            <div className="flex flex-col items-center justify-center h-full">
               <div className="relative">
-                <Sparkles className="h-24 w-24 mb-4 opacity-5" />
-                <div className="absolute inset-0 animate-pulse bg-white/5 blur-3xl rounded-full" />
+                <div className="absolute inset-0 animate-ping bg-zinc-200 blur-2xl rounded-full opacity-20" />
+                <Sparkles className="h-20 w-20 mb-4 text-zinc-200 relative z-10" />
               </div>
-              <p className="font-mono text-[10px] uppercase tracking-[0.5em] opacity-20">Ready to Architect</p>
+              <p className="font-mono text-[10px] uppercase tracking-[0.4em] text-zinc-400">Design Canvas Empty</p>
             </div>
           )}
         </div>
       </div>
 
       <style jsx global>{`
-        .tldraw-dark-theme .tl-container { background-color: #09090b !important; }
-        .tl-ui { --tl-background: #18181b !important; }
-        .tl-theme__dark { background: #09090b !important; }
+        /* Hubi in tldraw ay u muuqato light mode */
+        .tldraw-light-custom .tl-container { background-color: #ffffff !important; }
+        .tl-ui { --tl-background: #ffffff !important; }
       `}</style>
     </div>
   )
