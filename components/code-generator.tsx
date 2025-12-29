@@ -17,58 +17,48 @@ export default function CodeGenerator({ user }: { user: User }) {
   const [activeTab, setActiveTab] = useState("preview")
   const [showHistory, setShowHistory] = useState(false)
   const [editor, setEditor] = useState<Editor | null>(null)
+  
+  // 1. SAX: Ku dar useState qoraalka prompt-ka
+  const [userPrompt, setUserPrompt] = useState("")
 
   const handleGenerate = async () => {
-    if (!editor) return
-
-    setIsGenerating(true)
-    setGeneratedCode("")
+    if (!editor) return;
+    setIsGenerating(true);
 
     try {
-      // 1. Hel shapes-ka hadda la sawiray
-      const shapeIds = Array.from(editor.getCurrentPageShapeIds())
-      if (shapeIds.length === 0) {
-        alert("Fadlan wax sawir marka hore!")
-        setIsGenerating(false)
-        return
+      const shapeIds = Array.from(editor.getCurrentPageShapeIds());
+      if (shapeIds.length === 0 && !userPrompt) {
+        alert("Fadlan wax sawir ama qoraal ku dar!");
+        setIsGenerating(false);
+        return;
       }
 
-      // 2. ERROR FIX: Waxaan u isticmaalaynaa (editor as any) si looga takhaluso gaduudka TS
-      const svg = await (editor as any).getSvg(shapeIds)
-      
-      if (!svg) throw new Error("Could not generate SVG")
-      
-      const svgString = new XMLSerializer().serializeToString(svg)
-      const base64Image = `data:image/svg+xml;base64,${btoa(svgString)}`
+      // Habka SVG si uusan u 'istuurin'
+      const svg = await (editor as any).getSvg(shapeIds);
+      const svgString = new XMLSerializer().serializeToString(svg);
+      const base64Image = `data:image/svg+xml;base64,${btoa(svgString)}`;
 
-      // 3. U dir API-ga (JSON Response - maadaama aan stream-ka iska dhaafnay)
       const response = await fetch("/api/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ 
           image: base64Image,
-          prompt: "Build a high-quality website from this sketch using Tailwind CSS." 
+          prompt: userPrompt // 2. SAX: Isticmaal variable-ka saxda ah
         }),
-      })
+      });
 
-      if (!response.ok) throw new Error("API Connection Failed")
-
-      const data = await response.json()
+      const data = await response.json();
+      if (data.error) throw new Error(data.error);
       
-      if (data.code) {
-        setGeneratedCode(data.code)
-        setActiveTab("preview")
-      } else {
-        throw new Error("No code received")
-      }
-
-    } catch (err) {
-      console.error("Error:", err)
-      alert("Cillad ayaa dhacday xiliga dhalinta code-ka.")
+      setGeneratedCode(data.code);
+      setActiveTab("preview");
+    } catch (e) {
+      console.error(e);
+      alert("Cillad: " + (e as Error).message);
     } finally {
-      setIsGenerating(false)
+      setIsGenerating(false);
     }
-  }
+  };
 
   return (
     <div className="flex min-h-screen flex-col bg-white text-zinc-900">
@@ -81,15 +71,25 @@ export default function CodeGenerator({ user }: { user: User }) {
           onLoadHistory={(code) => { setGeneratedCode(code); setShowHistory(false) }} 
         />
 
-        {/* Bidix: tldraw Editor (Style-kaaga BG-White) */}
+        {/* Bidix: tldraw Editor */}
         <div className="w-full lg:w-1/2 border-r border-zinc-200 flex flex-col relative bg-white">
           <div className="h-12 border-b border-zinc-200 flex items-center justify-between px-4 bg-zinc-50">
             <span className="text-xs font-semibold uppercase tracking-wider text-zinc-500 flex items-center gap-2">
-              <MousePointer2 className="w-3 h-3" /> Sketch Pad
+              <MousePointer2 className="w-3 h-3" /> Visual Sketch Pad
             </span>
             <Button variant="ghost" size="sm" onClick={() => setShowHistory(true)}>
               <History className="h-4 w-4 text-zinc-400" />
             </Button>
+          </div>
+          
+          {/* 3. SAX: Ku dar Input meel qoraalka laga qoro */}
+          <div className="p-4 bg-zinc-50 border-b border-zinc-200">
+             <textarea 
+               placeholder="Describe your website (e.g. 'Make a luxury restaurant menu')..."
+               className="w-full h-20 p-3 text-sm border border-zinc-200 rounded-md focus:ring-2 focus:ring-zinc-900 outline-none resize-none"
+               value={userPrompt}
+               onChange={(e) => setUserPrompt(e.target.value)}
+             />
           </div>
           
           <div className="flex-1 overflow-hidden tldraw-light-custom">
@@ -106,9 +106,9 @@ export default function CodeGenerator({ user }: { user: User }) {
               className="w-full bg-zinc-900 text-white hover:bg-zinc-800 h-12 font-bold transition-all shadow-sm"
             >
               {isGenerating ? (
-                <><Loader2 className="animate-spin mr-2 h-4 w-4" /> Generating Code...</>
+                <><Loader2 className="animate-spin mr-2 h-4 w-4" /> DeepSeek is Thinking...</>
               ) : (
-                <><Sparkles className="mr-2 h-4 w-4 text-yellow-400" /> Generate Project</>
+                <><Sparkles className="mr-2 h-4 w-4 text-yellow-400" /> Generate with DeepSeek</>
               )}
             </Button>
           </div>
@@ -135,18 +135,16 @@ export default function CodeGenerator({ user }: { user: User }) {
             </Tabs>
           ) : (
             <div className="flex flex-col items-center justify-center h-full">
-              <div className="relative">
-                <div className="absolute inset-0 animate-ping bg-zinc-200 blur-2xl rounded-full opacity-20" />
-                <Sparkles className="h-20 w-20 mb-4 text-zinc-200 relative z-10" />
-              </div>
-              <p className="font-mono text-[10px] uppercase tracking-[0.4em] text-zinc-400">Design Canvas Empty</p>
+              <Sparkles className="h-20 w-20 mb-4 text-zinc-200" />
+              <p className="font-mono text-[10px] uppercase tracking-[0.4em] text-zinc-400 text-center px-10">
+                Draw a layout and describe it to start
+              </p>
             </div>
           )}
         </div>
       </div>
 
       <style jsx global>{`
-        /* Hubi in tldraw ay u muuqato light mode */
         .tldraw-light-custom .tl-container { background-color: #ffffff !important; }
         .tl-ui { --tl-background: #ffffff !important; }
       `}</style>
